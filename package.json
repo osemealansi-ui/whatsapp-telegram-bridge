@@ -7,7 +7,7 @@
     "start": "node bridge.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^7.0.0",
+    "@whiskeysockets/baileys": "^6.7.7",
     "telegraf": "^4.15.3",
     "pino": "^9.0.0",
     "qrcode-terminal": "^0.12.0"
