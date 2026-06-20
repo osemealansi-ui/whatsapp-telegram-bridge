@@ -1,4 +1,4 @@
-// ==================== WhatsApp to Telegram Bridge (Render Fixed) ====================
+// ==================== WhatsApp to Telegram Bridge (Fixed Timeout) ====================
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -79,9 +79,10 @@ async function sendMediaToTelegram(mediaBuffer, caption, topicId, isImage = true
 async function startWhatsApp() {
   try {
     const { state, saveCreds } = await useMultiFileAuthState("auth_info");
-    const { version } = await fetchLatestBaileysVersion();
 
-    console.log(`📦 إصدار Baileys: ${version}`);
+    // استخدام أحدث إصدار متاح تلقائياً
+    const { version } = await fetchLatestBaileysVersion();
+    console.log(`📦 إصدار Baileys المستخدم: ${version}`);
 
     const sock = makeWASocket({
       version,
@@ -89,25 +90,34 @@ async function startWhatsApp() {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
       },
-      logger: pino({ level: "silent" }),
+      logger: pino({ level: "trace" }), // زيادة مستوى السجلات للتشخيص
       printQRInTerminal: false,
-      connectTimeoutMs: 60000,
+      // ======== تحسينات الاتصال ========
+      connectTimeoutMs: 120000,  // دقيقتين بدل 20 ثانية
       keepAliveIntervalMs: 30000,
+      retryRequestDelayMs: 2000,
+      maxRetries: 10,
+      browser: ["WhatsApp Bridge", "Chrome", "1.0.0"], // تعريف المتصفح لتجنب الحظر
     });
+
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 20;
 
     sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect } = update;
 
       if (connection === "connecting") {
         console.log("⏳ جاري الاتصال بالواتساب...");
+        console.log(`   المحاولة رقم: ${reconnectAttempts + 1}`);
       }
 
       if (connection === "open") {
         console.log("✅ تم فتح اتصال واتساب بنجاح!");
+        reconnectAttempts = 0; // إعادة تعيين العداد
 
-        // ==================== تأخير طلب كود الاقتران لضمان استقرار الاتصال ====================
+        // ==================== طلب كود الاقتران ====================
         if (!sock.authState.creds.registered) {
-          console.log("⏳ انتظار 5 ثوان لاستقرار الاتصال قبل طلب كود الاقتران...");
+          console.log("⏳ انتظار 3 ثوان لاستقرار الاتصال...");
 
           setTimeout(async () => {
             try {
@@ -131,17 +141,13 @@ async function startWhatsApp() {
               console.log("   5️⃣ الربط برقم الهاتف");
               console.log(`   6️⃣ أدخل الكود: ${code}`);
               console.log("");
-              console.log("⏳ بانتظار إدخال الكود على الهاتف...");
+              console.log("⏳ بانتظار إدخال الكود...");
               console.log("═══════════════════════════════════");
             } catch (err) {
               console.error("❌ خطأ في طلب كود الاقتران:", err.message);
-              console.error("   جاري إعادة المحاولة تلقائياً...");
-              // إعادة المحاولة بعد 30 ثانية
-              setTimeout(() => {
-                console.log("🔄 إعادة محاولة طلب كود الاقتران...");
-              }, 30000);
+              console.error("   التفاصيل الكاملة:", JSON.stringify(err, null, 2));
             }
-          }, 5000);
+          }, 3000);
         }
       }
 
@@ -152,34 +158,43 @@ async function startWhatsApp() {
         console.log("⚠️ انقطع اتصال واتساب...");
         console.log(`   كود الحالة: ${statusCode || "غير معروف"}`);
 
-        if (statusCode === 401) {
-          console.log("🔧 تم اكتشاف خطأ 401 (جلسة غير صالحة).");
-          console.log("   سيتم حذف الجلسة القديمة وإعادة المحاولة...");
+        if (statusCode === 408) {
+          console.log("⏱️ انتهت مهلة الاتصال (Timeout 408).");
+          console.log("   قد يكون السيرفر بعيداً عن سيرفرات واتساب.");
+          console.log("   جاري إعادة المحاولة...");
+        }
 
-          // محاولة تنظيف الجلسة
+        if (statusCode === 401) {
+          console.log("🔧 جلسة غير صالحة. جاري تنظيف الجلسة...");
           const fs = require("fs");
           const path = require("path");
           const authPath = path.join(__dirname, "auth_info");
           if (fs.existsSync(authPath)) {
             try {
               fs.rmSync(authPath, { recursive: true, force: true });
-              console.log("✅ تم حذف مجلد الجلسة القديم.");
+              console.log("✅ تم حذف الجلسة القديمة.");
             } catch (e) {
-              console.log("⚠️ لم يتم حذف مجلد الجلسة:", e.message);
+              console.log("⚠️ فشل حذف الجلسة:", e.message);
             }
           }
+          reconnectAttempts = 0;
         }
 
-        if (shouldReconnect) {
-          console.log("🔄 جاري إعادة الاتصال بعد 5 ثوان...");
+        if (shouldReconnect && reconnectAttempts < maxReconnectAttempts) {
+          reconnectAttempts++;
+          const delay = Math.min(5000 * reconnectAttempts, 60000); // تأخير متزايد حتى 60 ثانية
+          console.log(`🔄 إعادة المحاولة بعد ${delay / 1000} ثوان... (${reconnectAttempts}/${maxReconnectAttempts})`);
           setTimeout(() => {
             startWhatsApp();
-          }, 5000);
+          }, delay);
+        } else if (reconnectAttempts >= maxReconnectAttempts) {
+          console.log("❌ تم الوصول للحد الأقصى للمحاولات. توقف.");
         } else {
-          console.log("❌ تم تسجيل الخروج بالكامل. جاري إعادة التشغيل...");
+          console.log("❌ تم تسجيل الخروج. جاري إعادة التشغيل...");
           setTimeout(() => {
+            reconnectAttempts = 0;
             startWhatsApp();
-          }, 10000);
+          }, 15000);
         }
       }
     });
@@ -252,17 +267,17 @@ async function startWhatsApp() {
     return sock;
   } catch (err) {
     console.error("❌ خطأ في بدء تشغيل واتساب:", err.message);
-    console.log("🔄 إعادة المحاولة بعد 10 ثوان...");
+    console.log("🔄 إعادة المحاولة بعد 15 ثوان...");
     setTimeout(() => {
       startWhatsApp();
-    }, 10000);
+    }, 15000);
   }
 }
 
 // ==================== بدء التشغيل ====================
 console.log("═══════════════════════════════════");
 console.log("🤖 نظام ربط واتساب ↔ تلغرام");
-console.log("   © الهندسة المدنية - Render");
+console.log("   © الهندسة المدنية");
 console.log("═══════════════════════════════════");
 console.log("🚀 جاري بدء التشغيل...");
 console.log("");
