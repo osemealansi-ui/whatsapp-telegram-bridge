@@ -91,16 +91,20 @@ async function startWhatsApp() {
     }
 
     if (connection === "close") {
-      const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log(
-        "⚠️ انقطع اتصال واتساب...",
-        shouldReconnect ? "جاري إعادة المحاولة" : "تم تسجيل الخروج"
-      );
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      
+      console.log("⚠️ انقطع اتصال واتساب...");
+      console.log(`   السبب: ${statusCode || "غير معروف"}`);
+      console.log(`   ${shouldReconnect ? "🔄 جاري إعادة الاتصال تلقائياً..." : "❌ تم تسجيل الخروج"}`);
+      
       if (shouldReconnect) {
-        startWhatsApp();
+        setTimeout(() => {
+          console.log("🔄 محاولة إعادة الاتصال...");
+          startWhatsApp();
+        }, 5000);
       } else {
-        console.log("🔄 تم تسجيل الخروج. احذف مجلد auth_info وأعد التشغيل.");
+        console.log("🔄 تم تسجيل الخروج بالكامل. يجب إعادة التشغيل.");
       }
     }
   });
@@ -172,16 +176,32 @@ async function startWhatsApp() {
 
   // ==================== طلب كود الاقتران ====================
   if (!sock.authState.creds.registered) {
-    console.log("📱 جاري طلب كود الاقتران...");
-    console.log(`رقم الهاتف المستخدم: ${PHONE_NUMBER}`);
+    console.log("═══════════════════════════════════");
+    console.log("📱 جاري طلب كود الاقتران من واتساب...");
+    console.log(`📞 رقم الهاتف: ${PHONE_NUMBER}`);
+    console.log("═══════════════════════════════════");
+    
     try {
       const code = await sock.requestPairingCode(PHONE_NUMBER);
-      console.log(`\n🔢 كود الاقتران الخاص بك: ${code}\n`);
-      console.log("📲 افتح واتساب على هاتفك:");
-      console.log("   الإعدادات > الأجهزة المرتبطة > ربط جهاز > الربط برقم الهاتف");
-      console.log(`   أدخل الكود: ${code}\n`);
+      console.log("");
+      console.log("═══════════════════════════════════");
+      console.log(`🔢 كود الاقتران الخاص بك: ${code}`);
+      console.log("═══════════════════════════════════");
+      console.log("");
+      console.log("📲 للربط، اتبع الخطوات التالية على هاتفك:");
+      console.log("   1️⃣ افتح تطبيق واتساب");
+      console.log("   2️⃣ اذهب إلى: الإعدادات ⚙️");
+      console.log("   3️⃣ اختر: الأجهزة المرتبطة");
+      console.log("   4️⃣ اضغط: ربط جهاز");
+      console.log("   5️⃣ اختر: الربط برقم الهاتف");
+      console.log(`   6️⃣ أدخل الكود: ${code}`);
+      console.log("");
+      console.log("⏳ بانتظار الربط...");
+      console.log("═══════════════════════════════════");
     } catch (err) {
-      console.error("خطأ في طلب كود الاقتران:", err.message);
+      console.error("❌ خطأ في طلب كود الاقتران:");
+      console.error(`   ${err.message}`);
+      console.error("   تأكد من صحة رقم الهاتف ومفتاح الدولة.");
     }
   }
 
@@ -189,5 +209,17 @@ async function startWhatsApp() {
 }
 
 // ==================== بدء التشغيل ====================
-console.log("🤖 جاري تشغيل نظام ربط واتساب ↔ تلغرام...");
-startWhatsApp();
+console.log("═══════════════════════════════════");
+console.log("🤖 نظام ربط واتساب ↔ تلغرام");
+console.log("   © الهندسة المدنية");
+console.log("═══════════════════════════════════");
+console.log("🚀 جاري بدء التشغيل...");
+console.log("");
+
+startWhatsApp().catch((err) => {
+  console.error("❌ خطأ في بدء التشغيل:", err.message);
+  console.log("🔄 إعادة المحاولة بعد 10 ثوان...");
+  setTimeout(() => {
+    startWhatsApp();
+  }, 10000);
+});
