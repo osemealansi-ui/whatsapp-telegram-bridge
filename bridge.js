@@ -1,4 +1,4 @@
-// ==================== WhatsApp to Telegram Bridge ====================
+// ==================== WhatsApp to Telegram Bridge (Render Fixed) ====================
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -8,6 +8,17 @@ const {
 } = require("@whiskeysockets/baileys");
 const { Telegraf } = require("telegraf");
 const pino = require("pino");
+const http = require("http");
+
+// ==================== سيرفر وهمي لمنع Render من إغلاق التطبيق ====================
+const PORT = process.env.PORT || 3000;
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Bot is running ✅");
+});
+server.listen(PORT, () => {
+  console.log(`🌐 سيرفر المنفذ يعمل على: ${PORT}`);
+});
 
 // ==================== قراءة متغيرات البيئة ====================
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -66,160 +77,194 @@ async function sendMediaToTelegram(mediaBuffer, caption, topicId, isImage = true
 
 // ==================== تشغيل واتساب ====================
 async function startWhatsApp() {
-  const { state, saveCreds } = await useMultiFileAuthState("auth_info");
-  const { version } = await fetchLatestBaileysVersion();
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState("auth_info");
+    const { version } = await fetchLatestBaileysVersion();
 
-  const sock = makeWASocket({
-    version,
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
-    },
-    logger: pino({ level: "silent" }),
-    printQRInTerminal: false,
-  });
+    console.log(`📦 إصدار Baileys: ${version}`);
 
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect } = update;
+    const sock = makeWASocket({
+      version,
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
+      },
+      logger: pino({ level: "silent" }),
+      printQRInTerminal: false,
+      connectTimeoutMs: 60000,
+      keepAliveIntervalMs: 30000,
+    });
 
-    if (connection === "connecting") {
-      console.log("⏳ جاري الاتصال بالواتساب...");
-    }
+    sock.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect } = update;
 
-    if (connection === "open") {
-      console.log("✅ تم ربط واتساب بنجاح!");
-    }
-
-    if (connection === "close") {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      
-      console.log("⚠️ انقطع اتصال واتساب...");
-      console.log(`   السبب: ${statusCode || "غير معروف"}`);
-      console.log(`   ${shouldReconnect ? "🔄 جاري إعادة الاتصال تلقائياً..." : "❌ تم تسجيل الخروج"}`);
-      
-      if (shouldReconnect) {
-        setTimeout(() => {
-          console.log("🔄 محاولة إعادة الاتصال...");
-          startWhatsApp();
-        }, 5000);
-      } else {
-        console.log("🔄 تم تسجيل الخروج بالكامل. يجب إعادة التشغيل.");
+      if (connection === "connecting") {
+        console.log("⏳ جاري الاتصال بالواتساب...");
       }
-    }
-  });
 
-  sock.ev.on("creds.update", saveCreds);
+      if (connection === "open") {
+        console.log("✅ تم فتح اتصال واتساب بنجاح!");
 
-  // ==================== استقبال الرسائل ====================
-  sock.ev.on("messages.upsert", async (m) => {
-    const msg = m.messages[0];
-    if (!msg.message || msg.key.fromMe) return;
+        // ==================== تأخير طلب كود الاقتران لضمان استقرار الاتصال ====================
+        if (!sock.authState.creds.registered) {
+          console.log("⏳ انتظار 5 ثوان لاستقرار الاتصال قبل طلب كود الاقتران...");
 
-    const remoteJid = msg.key.remoteJid;
-    if (!remoteJid.endsWith("@g.us")) return;
+          setTimeout(async () => {
+            try {
+              console.log("═══════════════════════════════════");
+              console.log("📱 جاري طلب كود الاقتران...");
+              console.log(`📞 رقم الهاتف: ${PHONE_NUMBER}`);
+              console.log("═══════════════════════════════════");
 
-    let groupName = "غير معروف";
-    try {
-      const metadata = await sock.groupMetadata(remoteJid);
-      groupName = metadata.subject || "غير معروف";
-    } catch (e) {}
+              const code = await sock.requestPairingCode(PHONE_NUMBER);
 
-    const topicId = GROUP_TOPIC_MAP[groupName];
-    if (!topicId) {
-      console.log(`⏩ تم تجاهل رسالة من مجموعة: ${groupName}`);
-      return;
-    }
+              console.log("");
+              console.log("═══════════════════════════════════");
+              console.log(`🔢 كود الاقتران الخاص بك: ${code}`);
+              console.log("═══════════════════════════════════");
+              console.log("");
+              console.log("📲 اتبع الخطوات على هاتفك:");
+              console.log("   1️⃣ افتح واتساب");
+              console.log("   2️⃣ الإعدادات ⚙️");
+              console.log("   3️⃣ الأجهزة المرتبطة");
+              console.log("   4️⃣ ربط جهاز");
+              console.log("   5️⃣ الربط برقم الهاتف");
+              console.log(`   6️⃣ أدخل الكود: ${code}`);
+              console.log("");
+              console.log("⏳ بانتظار إدخال الكود على الهاتف...");
+              console.log("═══════════════════════════════════");
+            } catch (err) {
+              console.error("❌ خطأ في طلب كود الاقتران:", err.message);
+              console.error("   جاري إعادة المحاولة تلقائياً...");
+              // إعادة المحاولة بعد 30 ثانية
+              setTimeout(() => {
+                console.log("🔄 إعادة محاولة طلب كود الاقتران...");
+              }, 30000);
+            }
+          }, 5000);
+        }
+      }
 
-    let textContent = "";
-    const messageTypes = Object.keys(msg.message);
-    const firstType = messageTypes[0];
+      if (connection === "close") {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-    if (firstType === "conversation") {
-      textContent = msg.message.conversation;
-    } else if (firstType === "extendedTextMessage") {
-      textContent = msg.message.extendedTextMessage.text;
-    } else if (firstType === "imageMessage") {
-      textContent = msg.message.imageMessage.caption || "";
-    } else if (firstType === "documentMessage") {
-      textContent = msg.message.documentMessage.caption || "";
-    } else if (firstType === "videoMessage") {
-      textContent = msg.message.videoMessage.caption || "";
-    }
+        console.log("⚠️ انقطع اتصال واتساب...");
+        console.log(`   كود الحالة: ${statusCode || "غير معروف"}`);
 
-    if (textContent) {
-      const finalText = `📢 من ${groupName}:\n${textContent}`;
-      await sendToTelegram(finalText, topicId);
-      console.log(`✅ تم إرسال نص إلى الموضوع ${topicId} من ${groupName}`);
-    }
+        if (statusCode === 401) {
+          console.log("🔧 تم اكتشاف خطأ 401 (جلسة غير صالحة).");
+          console.log("   سيتم حذف الجلسة القديمة وإعادة المحاولة...");
 
-    if (firstType === "imageMessage") {
+          // محاولة تنظيف الجلسة
+          const fs = require("fs");
+          const path = require("path");
+          const authPath = path.join(__dirname, "auth_info");
+          if (fs.existsSync(authPath)) {
+            try {
+              fs.rmSync(authPath, { recursive: true, force: true });
+              console.log("✅ تم حذف مجلد الجلسة القديم.");
+            } catch (e) {
+              console.log("⚠️ لم يتم حذف مجلد الجلسة:", e.message);
+            }
+          }
+        }
+
+        if (shouldReconnect) {
+          console.log("🔄 جاري إعادة الاتصال بعد 5 ثوان...");
+          setTimeout(() => {
+            startWhatsApp();
+          }, 5000);
+        } else {
+          console.log("❌ تم تسجيل الخروج بالكامل. جاري إعادة التشغيل...");
+          setTimeout(() => {
+            startWhatsApp();
+          }, 10000);
+        }
+      }
+    });
+
+    sock.ev.on("creds.update", saveCreds);
+
+    // ==================== استقبال الرسائل ====================
+    sock.ev.on("messages.upsert", async (m) => {
+      const msg = m.messages[0];
+      if (!msg.message || msg.key.fromMe) return;
+
+      const remoteJid = msg.key.remoteJid;
+      if (!remoteJid.endsWith("@g.us")) return;
+
+      let groupName = "غير معروف";
       try {
-        const media = await sock.downloadMediaMessage(msg);
-        await sendMediaToTelegram(media, textContent, topicId, true);
-        console.log(`✅ تم إرسال صورة إلى الموضوع ${topicId}`);
-      } catch (e) {
-        console.error("خطأ في تحميل الصورة:", e.message);
-      }
-    }
+        const metadata = await sock.groupMetadata(remoteJid);
+        groupName = metadata.subject || "غير معروف";
+      } catch (e) {}
 
-    if (firstType === "documentMessage" || firstType === "videoMessage") {
-      try {
-        const media = await sock.downloadMediaMessage(msg);
-        await sendMediaToTelegram(media, textContent, topicId, false);
-        console.log(`✅ تم إرسال ملف/فيديو إلى الموضوع ${topicId}`);
-      } catch (e) {
-        console.error("خطأ في تحميل الملف:", e.message);
+      const topicId = GROUP_TOPIC_MAP[groupName];
+      if (!topicId) {
+        console.log(`⏩ تم تجاهل: ${groupName}`);
+        return;
       }
-    }
-  });
 
-  // ==================== طلب كود الاقتران ====================
-  if (!sock.authState.creds.registered) {
-    console.log("═══════════════════════════════════");
-    console.log("📱 جاري طلب كود الاقتران من واتساب...");
-    console.log(`📞 رقم الهاتف: ${PHONE_NUMBER}`);
-    console.log("═══════════════════════════════════");
-    
-    try {
-      const code = await sock.requestPairingCode(PHONE_NUMBER);
-      console.log("");
-      console.log("═══════════════════════════════════");
-      console.log(`🔢 كود الاقتران الخاص بك: ${code}`);
-      console.log("═══════════════════════════════════");
-      console.log("");
-      console.log("📲 للربط، اتبع الخطوات التالية على هاتفك:");
-      console.log("   1️⃣ افتح تطبيق واتساب");
-      console.log("   2️⃣ اذهب إلى: الإعدادات ⚙️");
-      console.log("   3️⃣ اختر: الأجهزة المرتبطة");
-      console.log("   4️⃣ اضغط: ربط جهاز");
-      console.log("   5️⃣ اختر: الربط برقم الهاتف");
-      console.log(`   6️⃣ أدخل الكود: ${code}`);
-      console.log("");
-      console.log("⏳ بانتظار الربط...");
-      console.log("═══════════════════════════════════");
-    } catch (err) {
-      console.error("❌ خطأ في طلب كود الاقتران:");
-      console.error(`   ${err.message}`);
-      console.error("   تأكد من صحة رقم الهاتف ومفتاح الدولة.");
-    }
+      let textContent = "";
+      const messageTypes = Object.keys(msg.message);
+      const firstType = messageTypes[0];
+
+      if (firstType === "conversation") {
+        textContent = msg.message.conversation;
+      } else if (firstType === "extendedTextMessage") {
+        textContent = msg.message.extendedTextMessage.text;
+      } else if (firstType === "imageMessage") {
+        textContent = msg.message.imageMessage.caption || "";
+      } else if (firstType === "documentMessage") {
+        textContent = msg.message.documentMessage.caption || "";
+      } else if (firstType === "videoMessage") {
+        textContent = msg.message.videoMessage.caption || "";
+      }
+
+      if (textContent) {
+        const finalText = `📢 من ${groupName}:\n${textContent}`;
+        await sendToTelegram(finalText, topicId);
+        console.log(`✅ تم إرسال نص إلى الموضوع ${topicId} من ${groupName}`);
+      }
+
+      if (firstType === "imageMessage") {
+        try {
+          const media = await sock.downloadMediaMessage(msg);
+          await sendMediaToTelegram(media, textContent, topicId, true);
+          console.log(`✅ تم إرسال صورة إلى الموضوع ${topicId}`);
+        } catch (e) {
+          console.error("خطأ في تحميل الصورة:", e.message);
+        }
+      }
+
+      if (firstType === "documentMessage" || firstType === "videoMessage") {
+        try {
+          const media = await sock.downloadMediaMessage(msg);
+          await sendMediaToTelegram(media, textContent, topicId, false);
+          console.log(`✅ تم إرسال ملف/فيديو إلى الموضوع ${topicId}`);
+        } catch (e) {
+          console.error("خطأ في تحميل الملف:", e.message);
+        }
+      }
+    });
+
+    return sock;
+  } catch (err) {
+    console.error("❌ خطأ في بدء تشغيل واتساب:", err.message);
+    console.log("🔄 إعادة المحاولة بعد 10 ثوان...");
+    setTimeout(() => {
+      startWhatsApp();
+    }, 10000);
   }
-
-  return sock;
 }
 
 // ==================== بدء التشغيل ====================
 console.log("═══════════════════════════════════");
 console.log("🤖 نظام ربط واتساب ↔ تلغرام");
-console.log("   © الهندسة المدنية");
+console.log("   © الهندسة المدنية - Render");
 console.log("═══════════════════════════════════");
 console.log("🚀 جاري بدء التشغيل...");
 console.log("");
 
-startWhatsApp().catch((err) => {
-  console.error("❌ خطأ في بدء التشغيل:", err.message);
-  console.log("🔄 إعادة المحاولة بعد 10 ثوان...");
-  setTimeout(() => {
-    startWhatsApp();
-  }, 10000);
-});
+startWhatsApp();
